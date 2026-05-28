@@ -45,7 +45,7 @@ flowchart LR
 |-------|------------|
 | Language | Python 3.11+ |
 | Package manager | [uv](https://github.com/astral-sh/uv) |
-| HTTP API & dashboard | [FastAPI](https://fastapi.tiangolo.com/) + Uvicorn |
+| HTTP API & dashboard | [FastAPI](https://fastapi.tiangolo.com/) + Uvicorn + [Scalar](https://github.com/scalar/scalar) |
 | Persistence | SQLAlchemy + SQLite (`ledger.db` created locally; Docker volume in Compose) |
 | Orchestration | [Temporal](https://temporal.io/) (`temporalio` SDK) |
 | LLM | OpenAI GPT-4o-mini structured outputs ([Pydantic](https://docs.pydantic.dev/) `TaggingDecision`) |
@@ -85,7 +85,10 @@ make up-d
 
 | URL | Description |
 |-----|-------------|
-| http://localhost:8000 | ERP dashboard & REST API |
+| http://localhost:8000 | Ledger dashboard (HTML) |
+| http://localhost:8000/docs | Interactive API docs ([Scalar](https://github.com/scalar/scalar), bluePlanet, dark) |
+| http://localhost:8000/openapi.json | OpenAPI 3.0 schema (JSON) |
+| http://localhost:8000/health | Health / readiness probe |
 | http://localhost:8080 | Temporal Web UI |
 
 ### Dashboard
@@ -214,11 +217,128 @@ Compose reads `.env` from the repo root for variable substitution when you run `
 
 ---
 
-## HTTP API
+## API documentation
+
+The ERP exposes a machine-readable OpenAPI schema and an interactive reference UI powered by **[Scalar](https://github.com/scalar/scalar)** (`scalar-fastapi`). Default Swagger UI and ReDoc are disabled so `/docs` serves Scalar only.
+
+| Resource | URL |
+|----------|-----|
+| Interactive docs | http://localhost:8000/docs |
+| OpenAPI JSON | http://localhost:8000/openapi.json |
+
+**Scalar settings**
+
+| Setting | Value |
+|---------|--------|
+| Theme | `bluePlanet` |
+| Default appearance | Dark mode (`forceDarkModeState: dark`) |
+| Try-it-out | Available per operation in Scalar |
+
+Open the docs after `python main.py` or `make up-d`, then browse endpoints grouped by tag (**Health**, **Transactions**, **Chart of accounts**, **Tagging history**). Use **Try it** on `POST /api/transactions` to ingest a sample transaction without `curl`.
+
+To import the spec elsewhere (Postman, Insomnia, codegen):
+
+```bash
+curl -s http://localhost:8000/openapi.json -o openapi.json
+```
+
+---
+
+## Health API
+
+`GET /health` is the **liveness/readiness** endpoint used by Docker Compose (`docker/compose.yml` healthcheck) and suitable for load balancers or Kubernetes probes.
+
+### Response
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `status` | `healthy` \| `degraded` \| `unhealthy` | Aggregate result |
+| `version` | string | API version (currently `0.1.0`) |
+| `checks` | array | Per-dependency probe results |
+
+Each check:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | `database` or `temporal` |
+| `status` | `ok` \| `degraded` \| `error` | Result for that dependency |
+| `detail` | string (optional) | Human-readable note when not `ok` |
+
+### HTTP status codes
+
+| `status` | HTTP | Meaning |
+|----------|------|---------|
+| `healthy` | **200** | Database OK and Temporal client connected |
+| `degraded` | **200** | Database OK but Temporal not connected (API up; workflows will not run) |
+| `unhealthy` | **503** | Database probe failed — do not route traffic |
+
+### Checks
+
+| Check | `ok` | `degraded` | `error` |
+|-------|------|------------|---------|
+| **database** | `SELECT 1` succeeds | — | SQLAlchemy / SQLite error |
+| **temporal** | Worker client connected at boot | Client not connected | — |
+
+### Examples
+
+**Healthy** (Temporal running):
+
+```bash
+curl -s http://localhost:8000/health | jq
+```
+
+```json
+{
+  "status": "healthy",
+  "version": "0.1.0",
+  "checks": [
+    {"name": "database", "status": "ok"},
+    {"name": "temporal", "status": "ok"}
+  ]
+}
+```
+
+**Degraded** (ERP up, Temporal down or not started):
+
+```json
+{
+  "status": "degraded",
+  "version": "0.1.0",
+  "checks": [
+    {"name": "database", "status": "ok"},
+    {
+      "name": "temporal",
+      "status": "degraded",
+      "detail": "Temporal client not connected (ingest works; workflows will not run)"
+    }
+  ]
+}
+```
+
+**Unhealthy** (database unavailable) — HTTP **503**:
+
+```json
+{
+  "status": "unhealthy",
+  "version": "0.1.0",
+  "checks": [
+    {"name": "database", "status": "error", "detail": "..."},
+    {"name": "temporal", "status": "ok"}
+  ]
+}
+```
+
+Docker Compose waits until `/health` returns success before marking the `app` service healthy.
+
+---
+
+## Business API
+
+Ledger and workflow endpoints (full request/response shapes in Scalar at `/docs`).
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/` | Ledger dashboard (HTML) |
+| `GET` | `/` | Ledger dashboard (HTML, not in OpenAPI) |
 | `GET` | `/api/coa/{tenant_id}` | Chart of accounts |
 | `GET` | `/api/history/{tenant_id}` | Tenant-scoped tagging history (DB; grows with auto-post and HITL) |
 | `POST` | `/api/transactions` | Create transaction (triggers workflow via outbox) |
@@ -251,7 +371,9 @@ reap_cfo_agent/
 │   ├── temporal.py              # Temporal client & worker
 │   └── publisher.py             # Workflow trigger + circuit breaker
 ├── erp_service/
-│   ├── api/                     # FastAPI router, dashboard HTML
+│   ├── api/                     # FastAPI router, health, Scalar /docs, dashboard
+│   │   ├── health.py            # /health probes (database, Temporal)
+│   │   └── router.py            # Routes + OpenAPI metadata
 │   ├── core/database/           # SQLAlchemy models & repository (outbox)
 │   ├── core/seeds.py            # Default CoA + cold-start examples
 │   └── core/publisher.py        # Outbox polling / notify
@@ -309,6 +431,9 @@ make eval     # Offline mock classifier eval
 | Empty history for new tenant | Normal cold start; post and resolve a few txs or add bootstrap rows in `seeds.py`. |
 | Port 8000 in use | Change `ERP_PORT` in `.env` and compose port mapping. |
 | Docker app exits early | Wait for Temporal health; see `docker compose -f docker/compose.yml logs app`. |
+| `/health` returns `degraded` | Start Temporal (`temporal server start-dev` locally, or wait for Compose `temporal` service). |
+| `/health` returns **503** | Database path wrong or volume corrupt; check `DATABASE_URL` or `make down-v` for a fresh volume. |
+| `/docs` shows light theme | Hard-refresh; Scalar is configured for **bluePlanet** + forced **dark** mode. |
 
 ---
 

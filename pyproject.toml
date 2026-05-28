@@ -18,6 +18,7 @@ dependencies = [
     "python-dotenv",
     "requests",
     "sqlalchemy",
+    "scalar-fastapi>=1.8.2",
 ]
 
 [tool.uv]

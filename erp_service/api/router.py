@@ -1,11 +1,20 @@
 from typing import Dict, Any, Optional
 from loguru import logger
-from fastapi import FastAPI, Request, HTTPException, Form
+from fastapi import FastAPI, Request, HTTPException, Form, Response
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
+from scalar_fastapi import Theme, get_scalar_api_reference
 from temporalio.client import Client
 from ..core.database import SqlAlchemyERP
 from .dashboard import generate_dashboard_html
+from .health import HealthResponse, build_health_response
+
+API_VERSION = "0.1.0"
+API_DESCRIPTION = (
+    "Reap CFO Agent ERP gateway: transaction ingest, chart of accounts, "
+    "tenant tagging history, ledger updates, and human-in-the-loop resolve."
+)
+
 
 class TransactionRequest(BaseModel):
     merchant: str
@@ -20,33 +29,85 @@ class ResolveRequest(BaseModel):
 
 class AccountingGatewayRouter:
     """ERP HTTP gateway: ledger mutations, tenant tagging history, and dashboard."""
+
     def __init__(self, erp: SqlAlchemyERP):
         self.erp = erp
         self._temporal_client: Optional[Client] = None
-        self.app = FastAPI(title="Reap ERP Service Gateway")
+        self.app = FastAPI(
+            title="Reap CFO Agent — ERP API",
+            description=API_DESCRIPTION,
+            version=API_VERSION,
+            openapi_url="/openapi.json",
+            docs_url=None,
+            redoc_url=None,
+        )
         self._setup_routes()
 
     def set_temporal_client(self, client: Optional[Client]) -> None:
         self._temporal_client = client
 
     def _setup_routes(self):
-        @self.app.get("/", response_class=HTMLResponse)
+        @self.app.get(
+            "/health",
+            response_model=HealthResponse,
+            tags=["Health"],
+            summary="Service health",
+            description="Liveness/readiness probe. Returns 503 when the database is unavailable.",
+        )
+        async def health_handler(response: Response):
+            body = build_health_response(
+                self.erp,
+                temporal_connected=self._temporal_client is not None,
+                version=API_VERSION,
+            )
+            if body.status == "unhealthy":
+                response.status_code = 503
+            return body
+
+        @self.app.get("/docs", include_in_schema=False)
+        async def scalar_docs():
+            return get_scalar_api_reference(
+                openapi_url=self.app.openapi_url,
+                title=f"{self.app.title} — API Reference",
+                theme=Theme.BLUE_PLANET,
+                dark_mode=True,
+                force_dark_mode_state="dark",
+            )
+
+        @self.app.get("/", response_class=HTMLResponse, include_in_schema=False)
         async def dashboard_handler(request: Request):
             return await self.get_dashboard(request)
 
-        @self.app.get("/api/coa/{tenant_id}")
+        @self.app.get(
+            "/api/coa/{tenant_id}",
+            tags=["Chart of accounts"],
+            summary="Get chart of accounts",
+        )
         async def get_tenant_coa_handler(tenant_id: str):
             return await self.get_tenant_coa(tenant_id)
 
-        @self.app.get("/api/history/{tenant_id}")
+        @self.app.get(
+            "/api/history/{tenant_id}",
+            tags=["Tagging history"],
+            summary="Get few-shot tagging history",
+        )
         async def get_historical_context_handler(tenant_id: str):
             return await self.get_historical_context(tenant_id)
 
-        @self.app.post("/api/transactions")
+        @self.app.post(
+            "/api/transactions",
+            tags=["Transactions"],
+            summary="Create transaction",
+            description="Creates a ledger transaction and outbox entry; starts the tagging workflow.",
+        )
         async def create_transaction_handler(req: TransactionRequest):
             return await self.create_transaction(req)
 
-        @self.app.patch("/api/transactions/{tx_id}")
+        @self.app.patch(
+            "/api/transactions/{tx_id}",
+            tags=["Transactions"],
+            summary="Update transaction status",
+        )
         async def update_ledger_status_handler(
             tx_id: str,
             status: str,
@@ -55,7 +116,12 @@ class AccountingGatewayRouter:
         ):
             return await self.update_ledger_status(tx_id, status, account_code, reasoning)
 
-        @self.app.post("/api/transactions/{tx_id}/resolve")
+        @self.app.post(
+            "/api/transactions/{tx_id}/resolve",
+            tags=["Transactions"],
+            summary="Resolve human review",
+            description="Signals the Temporal workflow with the accountant's chosen account code.",
+        )
         async def resolve_transaction_handler(tx_id: str, account_code: str = Form(default="6200")):
             await self.resolve_transaction(tx_id, account_code)
             tx = self.erp.get_transaction(tx_id)
