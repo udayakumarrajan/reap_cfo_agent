@@ -88,6 +88,12 @@ make up-d
 | http://localhost:8000 | ERP dashboard & REST API |
 | http://localhost:8080 | Temporal Web UI |
 
+### Dashboard
+
+Open http://localhost:8000 (use `?tenant_id=all` or a specific tenant). The page auto-refreshes every 5 seconds.
+
+![REAP CFO Ledger — balances, outbox queue, and transactions with HITL approve](erp_service/api/dashboard.png)
+
 Verify from the host:
 
 ```bash
@@ -136,7 +142,7 @@ Logs should show ERP on port `8000`, Temporal worker registered, and outbox publ
 
 ### 4. Create a transaction
 
-**Dashboard:** http://localhost:8000/?tenant_id=all  
+**Dashboard:** http://localhost:8000/?tenant_id=all (see [Dashboard](#dashboard) above)
 
 **API:**
 
