@@ -1,0 +1,16 @@
+.venv
+venv
+__pycache__
+*.py[cod]
+.git
+.env
+.env.local
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.idea
+.vscode
+.DS_Store
+*.log
+agent-transcripts
+.cursor

@@ -1,0 +1,25 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "reap-cfo-agent"
+version = "0.1.0"
+description = "Event-Driven, Microservice-Based Transaction Auto-Tagging and Month-End Close Acceleration Loop"
+requires-python = ">=3.11"
+dependencies = [
+    "temporalio",
+    "openai",
+    "pydantic",
+    "loguru",
+    "fastapi",
+    "uvicorn",
+    "python-multipart",
+    "python-dotenv",
+    "requests",
+    "sqlalchemy",
+]
+
+[tool.uv]
+managed = true
+package = false

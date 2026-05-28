@@ -1,0 +1,17 @@
+[
+    {
+        "code": "6100",
+        "name": "SaaS tools & Software",
+        "type": "Expense"
+    },
+    {
+        "code": "6200",
+        "name": "Marketing",
+        "type": "Expense"
+    },
+    {
+        "code": "7000",
+        "name": "Suspense Account",
+        "type": "Expense"
+    }
+]
