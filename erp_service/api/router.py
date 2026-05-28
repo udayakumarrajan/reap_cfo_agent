@@ -1,6 +1,4 @@
-import os
-import json
-from typing import List, Dict, Any, Optional
+from typing import Dict, Any, Optional
 from loguru import logger
 from fastapi import FastAPI, Request, HTTPException, Form
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -21,10 +19,7 @@ class ResolveRequest(BaseModel):
 
 
 class AccountingGatewayRouter:
-    """
-    Mock Network Endpoint API Router for state mutation patches.
-    Fetches historical context from JSON and uses a separate dashboard generator.
-    """
+    """ERP HTTP gateway: ledger mutations, tenant tagging history, and dashboard."""
     def __init__(self, erp: SqlAlchemyERP):
         self.erp = erp
         self._temporal_client: Optional[Client] = None
@@ -86,7 +81,7 @@ class AccountingGatewayRouter:
 
     async def get_historical_context(self, tenant_id: str):
         logger.info(f"API CALL: Fetching historical context for tenant {tenant_id}")
-        history = self._load_history()
+        history = self.erp.get_tagging_history(tenant_id)
         return JSONResponse(content=history)
 
     async def create_transaction(self, req: TransactionRequest):
@@ -137,12 +132,3 @@ class AccountingGatewayRouter:
             "workflow_id": workflow_id,
             "account_code": account_code,
         })
-
-    def _load_history(self) -> List[Dict[str, Any]]:
-        history_path = os.path.join(os.path.dirname(__file__), "..", "mock_data", "history.json")
-        try:
-            with open(history_path, "r") as f:
-                return json.load(f)
-        except Exception as e:
-            logger.error(f"Router: Failed to load history from {history_path}: {e}")
-            return []

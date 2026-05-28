@@ -14,7 +14,7 @@ The system is split into two logical services: **ERP** (ledger state, HTTP API, 
 4. **Post**
    - **Straight-through** (confidence ≥ 0.85, no human review): status `AUTO_POSTED`, expense account applied.
    - **Human-in-the-loop**: status `NEEDS_REVIEW`, suspense account `7000`, workflow waits for a signal.
-5. **Resolve** — Accountant approves via dashboard **Approve** or `POST /api/transactions/{tx_id}/resolve` → status `HUMAN_RESOLVED`, final account code, learning-loop activity (mock persistence).
+5. **Resolve** — Accountant approves via dashboard **Approve** or `POST /api/transactions/{tx_id}/resolve` → status `HUMAN_RESOLVED`, final account code; override is stored in `tagging_feedback` for that tenant’s few-shot history.
 
 ```mermaid
 flowchart LR
@@ -46,7 +46,7 @@ flowchart LR
 | Language | Python 3.11+ |
 | Package manager | [uv](https://github.com/astral-sh/uv) |
 | HTTP API & dashboard | [FastAPI](https://fastapi.tiangolo.com/) + Uvicorn |
-| Persistence | SQLAlchemy + SQLite (`ledger.db` locally, volume in Docker) |
+| Persistence | SQLAlchemy + SQLite (`ledger.db` created locally; Docker volume in Compose) |
 | Orchestration | [Temporal](https://temporal.io/) (`temporalio` SDK) |
 | LLM | OpenAI GPT-4o-mini structured outputs ([Pydantic](https://docs.pydantic.dev/) `TaggingDecision`) |
 | Logging | [Loguru](https://github.com/Delgan/loguru) |
@@ -174,6 +174,30 @@ curl -X POST "http://localhost:8000/api/transactions/tx_1/resolve" \
 
 ---
 
+## Assumptions and phase 2
+
+| Topic | MVP (this repo) | Production phase 2 |
+|-------|-----------------|-------------------|
+| **Per-tenant CoA** | Shared default CoA seeded in code; `tenant_id` on transactions | `coa` rows scoped by `tenant_id`; sync from accounting platform |
+| **Cold start** | Fresh DB seeds two example tags for tenant `123`; new tenants start with empty history | Import accountant exports or prior-period labels on onboarding |
+| **Learning loop** | `tagging_feedback` table updated on `AUTO_POSTED` / `HUMAN_RESOLVED`; `/api/history/{tenant_id}` feeds the classifier | Retrieval / rules engine over feedback; optional fine-tune pipeline |
+| **Evals** | Offline mock classifier suite: `make eval` | Golden set in CI + LLM-judge or human review for long-tail vendors |
+| **Accounting sync** | ERP ledger PATCH simulates the external GL | Idempotent export to Xero/NetSuite/etc. |
+
+---
+
+## Classifier eval (offline)
+
+Runs the mock classifier against known merchants (no running server or API key):
+
+```bash
+make eval
+```
+
+Cases cover STP (AWS, Slack, Google Ads) and long-tail routing to review/suspense.
+
+---
+
 ## Configuration
 
 Copy [`.env.example`](.env.example) to `.env` at the repository root.
@@ -196,7 +220,7 @@ Compose reads `.env` from the repo root for variable substitution when you run `
 |--------|------|-------------|
 | `GET` | `/` | Ledger dashboard (HTML) |
 | `GET` | `/api/coa/{tenant_id}` | Chart of accounts |
-| `GET` | `/api/history/{tenant_id}` | Few-shot tagging history |
+| `GET` | `/api/history/{tenant_id}` | Tenant-scoped tagging history (DB; grows with auto-post and HITL) |
 | `POST` | `/api/transactions` | Create transaction (triggers workflow via outbox) |
 | `PATCH` | `/api/transactions/{tx_id}` | Update status / account (query params) |
 | `POST` | `/api/transactions/{tx_id}/resolve` | Signal workflow for HITL approval (`account_code` form field) |
@@ -229,17 +253,18 @@ reap_cfo_agent/
 ├── erp_service/
 │   ├── api/                     # FastAPI router, dashboard HTML
 │   ├── core/database/           # SQLAlchemy models & repository (outbox)
-│   ├── core/publisher.py        # Outbox polling / notify
-│   └── mock_data/               # Seed CoA & history JSON
+│   ├── core/seeds.py            # Default CoA + cold-start examples
+│   └── core/publisher.py        # Outbox polling / notify
 ├── workflow_service/
 │   ├── workflows/               # TransactionCloseWorkflow (STP + HITL)
 │   ├── activities/              # ERP + LLM side effects
 │   ├── agents/                  # OpenAI / mock classifier
 │   └── models/                  # Pydantic schemas (TaggingDecision)
 ├── scripts/
-│   └── smoke_erp.py             # Manual HTTP smoke checks
+│   ├── smoke_erp.py             # Manual HTTP smoke checks
+│   └── eval_tagging.py          # Offline classifier eval (mock)
 ├── docker/                      # Dockerfile, compose.yml, entrypoint
-├── Makefile                     # compose & smoke shortcuts
+├── Makefile                     # compose, smoke, eval shortcuts
 ├── pyproject.toml
 └── .env.example
 ```
@@ -257,6 +282,7 @@ make down-v   # Compose down + remove volumes
 make logs     # Follow app container logs
 make build    # Build app image only
 make smoke    # Run scripts/smoke_erp.py against localhost:8000
+make eval     # Offline mock classifier eval
 ```
 
 ---
@@ -279,6 +305,8 @@ make smoke    # Run scripts/smoke_erp.py against localhost:8000
 | No workflow / stuck `PENDING` | Temporal running? `TEMPORAL_ADDRESS` correct? App logs for worker errors. |
 | `No workflow` on Approve | Transaction created before `workflow_id` was stored; create a **new** transaction after restart. |
 | Mock always goes to review | Expected without API key for unknown merchants; try `Amazon Web Services` for STP demo. |
+| OpenAI timeout / 5xx | Classifier retries once, then routes to suspense `7000` + `NEEDS_REVIEW` (fail-safe). |
+| Empty history for new tenant | Normal cold start; post and resolve a few txs or add bootstrap rows in `seeds.py`. |
 | Port 8000 in use | Change `ERP_PORT` in `.env` and compose port mapping. |
 | Docker app exits early | Wait for Temporal health; see `docker compose -f docker/compose.yml logs app`. |
 

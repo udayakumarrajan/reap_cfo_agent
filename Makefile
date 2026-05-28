@@ -1,7 +1,7 @@
 COMPOSE_FILE := docker/compose.yml
 COMPOSE := docker compose -f $(COMPOSE_FILE)
 
-.PHONY: help up up-d down down-v logs build smoke
+.PHONY: help up up-d down down-v logs build smoke eval
 
 help:
 	@echo "Targets:"
@@ -12,6 +12,7 @@ help:
 	@echo "  make logs    Follow application logs"
 	@echo "  make build   Build application image"
 	@echo "  make smoke   Run ERP HTTP smoke script (host)"
+	@echo "  make eval    Run offline tagging classifier eval (mock)"
 
 up:
 	$(COMPOSE) up --build
@@ -33,3 +34,6 @@ build:
 
 smoke:
 	python scripts/smoke_erp.py
+
+eval:
+	uv run python scripts/eval_tagging.py

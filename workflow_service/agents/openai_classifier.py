@@ -47,29 +47,44 @@ class OpenAIGpt4oMiniClassifier(BaseClassifier):
         )
 
         user_content = json.dumps({"transaction": transaction})
+        return await self._call_with_retry(system_prompt, user_content)
 
-        try:
-            completion = await self.client.beta.chat.completions.parse(
-                model="gpt-4o-mini-2024-07-18",
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_content},
-                ],
-                response_format=TaggingDecision,
-                temperature=0.0,
-            )
-            decision = completion.choices[0].message.parsed
-            logger.info(f"LLM Decision: {decision.account_code} (Conf: {decision.confidence_score})")
-            return decision
-        except Exception as e:
-            logger.error(f"OpenAI API error: {e}")
-            return TaggingDecision(
-                account_code="7000",
-                account_name="Suspense Account",
-                confidence_score=0.0,
-                reasoning=f"API Error: {str(e)}",
-                requires_human_review=True
-            )
+    async def _call_with_retry(self, system_prompt: str, user_content: str) -> TaggingDecision:
+        last_error: Exception | None = None
+        for attempt in range(2):
+            try:
+                completion = await self.client.beta.chat.completions.parse(
+                    model="gpt-4o-mini-2024-07-18",
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_content},
+                    ],
+                    response_format=TaggingDecision,
+                    temperature=0.0,
+                )
+                decision = completion.choices[0].message.parsed
+                logger.info(
+                    f"LLM Decision: {decision.account_code} (Conf: {decision.confidence_score})"
+                )
+                return decision
+            except Exception as e:
+                last_error = e
+                if attempt == 0:
+                    logger.warning(f"OpenAI API attempt 1 failed ({e}). Retrying once.")
+                else:
+                    logger.error(f"OpenAI API failed after retry: {e}")
+        return self._fail_safe_decision(last_error)
+
+    @staticmethod
+    def _fail_safe_decision(error: Exception | None) -> TaggingDecision:
+        detail = str(error) if error else "unknown error"
+        return TaggingDecision(
+            account_code="7000",
+            account_name="Suspense Account",
+            confidence_score=0.0,
+            reasoning=f"API Error (after retry): {detail}",
+            requires_human_review=True,
+        )
 
     def _mock_response(self, transaction: Dict[str, Any]) -> TaggingDecision:
         merchant = (transaction.get("merchant") or "").lower()

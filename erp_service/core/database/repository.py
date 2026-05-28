@@ -1,43 +1,54 @@
-import json
-import os
 import uuid
 from typing import List, Dict, Any, Optional, Callable
 from sqlalchemy.orm import Session
-from .models import Transaction, OutboxEntry, LedgerBalance, ChartOfAccount
+from .models import Transaction, OutboxEntry, LedgerBalance, ChartOfAccount, TaggingFeedback
+from ..seeds import DEFAULT_COA, DEFAULT_TENANT_ID, DEFAULT_TAGGING_EXAMPLES
 from loguru import logger
 
 
 class SqlAlchemyERP:
-    """
-    SQLAlchemy-backed ERP implementation.
-    """
+    """SQLAlchemy-backed ERP implementation."""
+
     def __init__(self, session_factory, on_new_entry: Optional[Callable[[], None]] = None):
         self.session_factory = session_factory
         self.on_new_entry = on_new_entry
-        self._seed_data()
+        self._seed_default_coa()
+        self._seed_cold_start_examples()
 
-    def _seed_data(self):
-        coa_path = os.path.join(os.path.dirname(__file__), "..", "..", "mock_data", "coa.json")
-        try:
-            with open(coa_path, "r") as f:
-                coa_data = json.load(f)
-                with self.session_factory() as session:
-                    if session.query(ChartOfAccount).count() == 0:
-                        for item in coa_data:
-                            session.add(ChartOfAccount(
-                                code=item["code"],
-                                name=item["name"],
-                                type=item["type"]
-                            ))
-                            session.add(LedgerBalance(
-                                tenant_id="123",
-                                account_code=item["code"],
-                                balance=0.0
-                            ))
-                        session.commit()
-                        logger.info("ORM: Seeded static CoA data.")
-        except Exception as e:
-            logger.error(f"ORM: Failed to seed data: {e}")
+    def _seed_default_coa(self) -> None:
+        with self.session_factory() as session:
+            if session.query(ChartOfAccount).count() > 0:
+                return
+            for item in DEFAULT_COA:
+                session.add(ChartOfAccount(
+                    code=item["code"],
+                    name=item["name"],
+                    type=item["type"],
+                ))
+                session.add(LedgerBalance(
+                    tenant_id=DEFAULT_TENANT_ID,
+                    account_code=item["code"],
+                    balance=0.0,
+                ))
+            session.commit()
+            logger.info("ORM: Seeded default chart of accounts.")
+
+    def _seed_cold_start_examples(self) -> None:
+        with self.session_factory() as session:
+            if session.query(TaggingFeedback).count() > 0:
+                return
+            for ex in DEFAULT_TAGGING_EXAMPLES:
+                session.add(TaggingFeedback(
+                    id=str(uuid.uuid4()),
+                    tenant_id=DEFAULT_TENANT_ID,
+                    merchant=ex["merchant"],
+                    amount=ex["amount"],
+                    account_code=ex["account_code"],
+                    account_name=ex["account_name"],
+                    source=ex["source"],
+                ))
+            session.commit()
+            logger.info("ORM: Seeded cold-start tagging examples for tenant %s.", DEFAULT_TENANT_ID)
 
     def _adjust_balance(self, session: Session, tenant_id: str, account_code: str, delta: float) -> None:
         bal = session.query(LedgerBalance).filter_by(
@@ -49,6 +60,10 @@ class SqlAlchemyERP:
             session.add(LedgerBalance(
                 tenant_id=tenant_id, account_code=account_code, balance=delta
             ))
+
+    def _account_name(self, session: Session, account_code: str) -> Optional[str]:
+        row = session.query(ChartOfAccount).filter_by(code=account_code).first()
+        return row.name if row else None
 
     def create_transaction(self, tenant_id: str, payload: Dict[str, Any]) -> str:
         external_id = payload.get("external_id")
@@ -68,7 +83,7 @@ class SqlAlchemyERP:
                 tenant_id=tenant_id,
                 merchant=payload["merchant"],
                 amount=payload["amount"],
-                status="PENDING"
+                status="PENDING",
             )
             session.add(new_tx)
 
@@ -82,8 +97,8 @@ class SqlAlchemyERP:
                     "tenant_id": tenant_id,
                     "merchant": payload["merchant"],
                     "amount": payload["amount"],
-                    "status": "PENDING"
-                }
+                    "status": "PENDING",
+                },
             )
             session.add(outbox)
             session.commit()
@@ -134,6 +149,78 @@ class SqlAlchemyERP:
             session.commit()
             logger.info(f"ORM: Updated {tx_id} to {status} (account {tx.account_code}).")
 
+            if account_code and status in ("AUTO_POSTED", "HUMAN_RESOLVED"):
+                self._record_tagging_feedback_in_session(
+                    session,
+                    tenant_id=tx.tenant_id,
+                    merchant=tx.merchant,
+                    amount=tx.amount,
+                    account_code=account_code,
+                    source="auto_posted" if status == "AUTO_POSTED" else "human_override",
+                )
+                session.commit()
+
+    def _record_tagging_feedback_in_session(
+        self,
+        session: Session,
+        tenant_id: str,
+        merchant: str,
+        amount: Optional[float],
+        account_code: str,
+        source: str,
+    ) -> None:
+        session.add(TaggingFeedback(
+            id=str(uuid.uuid4()),
+            tenant_id=tenant_id,
+            merchant=merchant,
+            amount=amount,
+            account_code=account_code,
+            account_name=self._account_name(session, account_code),
+            source=source,
+        ))
+
+    def get_tagging_history(self, tenant_id: str, limit: int = 50) -> List[Dict[str, Any]]:
+        """Tenant-scoped few-shot examples for the classifier."""
+        with self.session_factory() as session:
+            rows = (
+                session.query(TaggingFeedback)
+                .filter_by(tenant_id=tenant_id)
+                .order_by(TaggingFeedback.created_at.desc())
+                .limit(limit)
+                .all()
+            )
+            if rows:
+                return [
+                    {
+                        "merchant": r.merchant,
+                        "amount": r.amount,
+                        "account_code": r.account_code,
+                        "account_name": r.account_name or r.account_code,
+                    }
+                    for r in rows
+                ]
+
+            tx_rows = (
+                session.query(Transaction)
+                .filter(
+                    Transaction.tenant_id == tenant_id,
+                    Transaction.status.in_(("AUTO_POSTED", "HUMAN_RESOLVED")),
+                    Transaction.account_code.isnot(None),
+                )
+                .order_by(Transaction.timestamp.desc())
+                .limit(limit)
+                .all()
+            )
+            return [
+                {
+                    "merchant": r.merchant,
+                    "amount": r.amount,
+                    "account_code": r.account_code,
+                    "account_name": self._account_name(session, r.account_code) or r.account_code,
+                }
+                for r in tx_rows
+            ]
+
     def get_coa(self, tenant_id: str) -> List[Dict[str, str]]:
         with self.session_factory() as session:
             rows = session.query(ChartOfAccount).all()
@@ -170,10 +257,11 @@ class SqlAlchemyERP:
             return sorted(list(tenants))
 
     def count_pending_outbox(self, tenant_id: str = "all") -> int:
-        entries = self.outbox_table
-        if tenant_id == "all":
-            return len(entries)
-        return sum(1 for e in entries if e.get("tenant_id") == tenant_id)
+        with self.session_factory() as session:
+            q = session.query(OutboxEntry).filter_by(processed=False)
+            if tenant_id != "all":
+                q = q.filter_by(tenant_id=tenant_id)
+            return q.count()
 
     @staticmethod
     def _tx_to_dict(r: Transaction) -> Dict[str, Any]:
@@ -202,7 +290,7 @@ class SqlAlchemyERP:
             rows = session.query(OutboxEntry).filter_by(processed=False).all()
             return [{
                 "id": r.id, "tx_id": r.tx_id, "tenant_id": r.tenant_id,
-                "payload": r.payload, "processed": r.processed
+                "payload": r.payload, "processed": r.processed,
             } for r in rows]
 
     def mark_outbox_processed(self, entry_id: str):

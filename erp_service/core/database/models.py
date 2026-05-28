@@ -37,3 +37,16 @@ class ChartOfAccount(Base):
     code = Column(String, primary_key=True)
     name = Column(String, nullable=False)
     type = Column(String, nullable=False)
+
+
+class TaggingFeedback(Base):
+    """Per-tenant tagging examples from auto-post and human overrides."""
+    __tablename__ = "tagging_feedback"
+    id = Column(String, primary_key=True)
+    tenant_id = Column(String, nullable=False, index=True)
+    merchant = Column(String, nullable=False)
+    amount = Column(Float, nullable=True)
+    account_code = Column(String, nullable=False)
+    account_name = Column(String, nullable=True)
+    source = Column(String, nullable=False)
+    created_at = Column(String, default=lambda: datetime.now().isoformat())

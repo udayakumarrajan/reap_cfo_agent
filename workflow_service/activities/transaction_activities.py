@@ -71,6 +71,5 @@ class TransactionActivities:
         """
         merchant = payload.get("merchant")
         final_code = payload.get("account_code")
-        logger.info(f"Activity: Updating learning loop for merchant '{merchant}' with code {final_code}")
-        # Mock vector DB update transition
-        return "SUCCESS: Persisted feedback vector"
+        logger.info(f"Activity: Learning loop for '{merchant}' -> {final_code} (stored via ERP)")
+        return "SUCCESS"

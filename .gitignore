@@ -54,10 +54,10 @@ dmypy.json
 *.db
 *.sqlite
 *.sqlite3
-# Tracked: prompt.md, ledger.db
-!ledger.db
 
+# Take-home artifacts (local only)
 *.pdf
+prompt.md
 
 # IDE and editors
 .idea/
