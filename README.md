@@ -427,7 +427,7 @@ make eval     # Offline mock classifier eval
 | No workflow / stuck `PENDING` | Temporal running? `TEMPORAL_ADDRESS` correct? App logs for worker errors. |
 | `No workflow` on Approve | Transaction created before `workflow_id` was stored; create a **new** transaction after restart. |
 | Mock always goes to review | Expected without API key for unknown merchants; try `Amazon Web Services` for STP demo. |
-| OpenAI timeout / 5xx | Classifier retries once, then routes to suspense `7000` + `NEEDS_REVIEW` (fail-safe). |
+| OpenAI timeout / 5xx | Up to **3 retries** (4 attempts total, SDK retries off), then suspense `7000` + `NEEDS_REVIEW`. |
 | Empty history for new tenant | Normal cold start; post and resolve a few txs or add bootstrap rows in `seeds.py`. |
 | Port 8000 in use | Change `ERP_PORT` in `.env` and compose port mapping. |
 | Docker app exits early | Wait for Temporal health; see `docker compose -f docker/compose.yml logs app`. |

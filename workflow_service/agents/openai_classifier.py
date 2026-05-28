@@ -10,6 +10,10 @@ from loguru import logger
 # Load environment variables (force override to avoid system env conflicts)
 load_dotenv(override=True)
 
+# Application-level retries only (SDK HTTP retries disabled to avoid duplicate attempts).
+MAX_OPENAI_RETRIES = 3
+
+
 class OpenAIGpt4oMiniClassifier(BaseClassifier):
     """
     Concrete Strategy using OpenAI Structured Outputs for total determinism.
@@ -23,7 +27,7 @@ class OpenAIGpt4oMiniClassifier(BaseClassifier):
         else:
             key_suffix = self.api_key[-4:] if self.api_key else "NONE"
             logger.info(f"OpenAI Classifier: Initializing with API key ending in ...{key_suffix}")
-            self.client = AsyncOpenAI(api_key=self.api_key)
+            self.client = AsyncOpenAI(api_key=self.api_key, max_retries=0)
 
     async def classify(self, transaction: Dict[str, Any], coa: List[Dict[str, str]], history: List[Dict[str, Any]]) -> TaggingDecision:
         logger.info(f"Classifying transaction: {transaction.get('merchant')} - {transaction.get('amount')}")
@@ -51,7 +55,8 @@ class OpenAIGpt4oMiniClassifier(BaseClassifier):
 
     async def _call_with_retry(self, system_prompt: str, user_content: str) -> TaggingDecision:
         last_error: Exception | None = None
-        for attempt in range(2):
+        max_attempts = MAX_OPENAI_RETRIES + 1
+        for attempt in range(1, max_attempts + 1):
             try:
                 completion = await self.client.beta.chat.completions.parse(
                     model="gpt-4o-mini-2024-07-18",
@@ -69,10 +74,14 @@ class OpenAIGpt4oMiniClassifier(BaseClassifier):
                 return decision
             except Exception as e:
                 last_error = e
-                if attempt == 0:
-                    logger.warning(f"OpenAI API attempt 1 failed ({e}). Retrying once.")
+                if attempt < max_attempts:
+                    logger.warning(
+                        f"OpenAI API attempt {attempt}/{max_attempts} failed ({e}). Retrying..."
+                    )
                 else:
-                    logger.error(f"OpenAI API failed after retry: {e}")
+                    logger.error(
+                        f"OpenAI API failed after {max_attempts} attempts: {e}"
+                    )
         return self._fail_safe_decision(last_error)
 
     @staticmethod
@@ -82,7 +91,7 @@ class OpenAIGpt4oMiniClassifier(BaseClassifier):
             account_code="7000",
             account_name="Suspense Account",
             confidence_score=0.0,
-            reasoning=f"API Error (after retry): {detail}",
+            reasoning=f"API Error (after {MAX_OPENAI_RETRIES} retries): {detail}",
             requires_human_review=True,
         )
 
