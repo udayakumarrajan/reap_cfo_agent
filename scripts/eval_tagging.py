@@ -17,7 +17,7 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 from erp_service.core.seeds import DEFAULT_COA
-from workflow_service.agents.openai_classifier import OpenAIGpt4oMiniClassifier
+from workflow_service.agents import LlmClassifierAgent
 
 COA = [{"code": c["code"], "name": c["name"], "type": c["type"]} for c in DEFAULT_COA]
 HISTORY: List[dict] = [
@@ -56,7 +56,7 @@ CASES = [
 
 
 async def run_eval() -> int:
-    classifier = OpenAIGpt4oMiniClassifier(api_key="mock-key")
+    classifier = LlmClassifierAgent(api_key="mock-key")
     passed = 0
     failed = 0
 

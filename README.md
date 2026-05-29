@@ -4,6 +4,8 @@ Transaction auto-tagging and month-end close acceleration for a multi-tenant exp
 
 The system is split into two logical services: **ERP** (ledger state, HTTP API, transactional outbox) and **workflow** (Temporal orchestration, AI tagging, activities). They communicate over HTTP and Temporal, not shared in-process calls from workflow code.
 
+**Architecture & system design (Workflow 1, take-home):** [ARCHITECTURE_SYSTEM_DESIGN.md](ARCHITECTURE_SYSTEM_DESIGN.md) — requirements mapping, design patterns, sequence diagrams, and rationale (including Temporal vs alternatives).
+
 ---
 
 ## What it does
@@ -380,7 +382,7 @@ reap_cfo_agent/
 ├── workflow_service/
 │   ├── workflows/               # TransactionCloseWorkflow (STP + HITL)
 │   ├── activities/              # ERP + LLM side effects
-│   ├── agents/                  # OpenAI / mock classifier
+│   ├── agents/                  # ClassifierAgent + LlmClassifierAgent (mock without API key)
 │   └── models/                  # Pydantic schemas (TaggingDecision)
 ├── scripts/
 │   ├── smoke_erp.py             # Manual HTTP smoke checks

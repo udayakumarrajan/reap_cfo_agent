@@ -1,37 +1,50 @@
-import os
 import json
-from typing import List, Dict, Any
-from openai import AsyncOpenAI
-from dotenv import load_dotenv
-from ..models.schemas import TaggingDecision
-from .base import BaseClassifier
-from loguru import logger
+import os
+from typing import Any, Dict, List
 
-# Load environment variables (force override to avoid system env conflicts)
+from dotenv import load_dotenv
+from loguru import logger
+from openai import AsyncOpenAI
+
+from ..models.schemas import TaggingDecision
+from .classifier_agent import ClassifierAgent
+
 load_dotenv(override=True)
 
 # Application-level retries only (SDK HTTP retries disabled to avoid duplicate attempts).
-MAX_OPENAI_RETRIES = 3
+MAX_LLM_RETRIES = int(os.getenv("LLM_MAX_RETRIES", os.getenv("OPENAI_MAX_RETRIES", "3")))
+DEFAULT_LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4o-mini-2024-07-18")
 
 
-class OpenAIGpt4oMiniClassifier(BaseClassifier):
+class LlmClassifierAgent(ClassifierAgent):
     """
-    Concrete Strategy using OpenAI Structured Outputs for total determinism.
-    Uses GPT-4o-mini with temperature 0.0.
+    LLM-backed classifier using structured outputs (provider configured via env).
+    Falls back to deterministic mock logic when no API key is configured.
     """
-    def __init__(self, api_key: str = None):
+
+    def __init__(self, api_key: str | None = None, model: str | None = None):
         self.api_key = api_key or os.getenv("OPENAI_API_KEY")
+        self.model = model or DEFAULT_LLM_MODEL
         if not self.api_key or self.api_key == "mock-key":
-            logger.warning("OPENAI_API_KEY not set or is 'mock-key'. Using mock response logic.")
+            logger.warning(
+                "LLM API key not set or is 'mock-key'. Using mock classifier logic."
+            )
             self.client = None
         else:
             key_suffix = self.api_key[-4:] if self.api_key else "NONE"
-            logger.info(f"OpenAI Classifier: Initializing with API key ending in ...{key_suffix}")
+            logger.info(f"LLM classifier agent: API key ending in ...{key_suffix}")
             self.client = AsyncOpenAI(api_key=self.api_key, max_retries=0)
 
-    async def classify(self, transaction: Dict[str, Any], coa: List[Dict[str, str]], history: List[Dict[str, Any]]) -> TaggingDecision:
-        logger.info(f"Classifying transaction: {transaction.get('merchant')} - {transaction.get('amount')}")
-        
+    async def classify(
+        self,
+        transaction: Dict[str, Any],
+        coa: List[Dict[str, str]],
+        history: List[Dict[str, Any]],
+    ) -> TaggingDecision:
+        logger.info(
+            f"Classifying transaction: {transaction.get('merchant')} - {transaction.get('amount')}"
+        )
+
         if not self.client:
             return self._mock_response(transaction)
 
@@ -55,11 +68,11 @@ class OpenAIGpt4oMiniClassifier(BaseClassifier):
 
     async def _call_with_retry(self, system_prompt: str, user_content: str) -> TaggingDecision:
         last_error: Exception | None = None
-        max_attempts = MAX_OPENAI_RETRIES + 1
+        max_attempts = MAX_LLM_RETRIES + 1
         for attempt in range(1, max_attempts + 1):
             try:
                 completion = await self.client.beta.chat.completions.parse(
-                    model="gpt-4o-mini-2024-07-18",
+                    model=self.model,
                     messages=[
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_content},
@@ -69,19 +82,17 @@ class OpenAIGpt4oMiniClassifier(BaseClassifier):
                 )
                 decision = completion.choices[0].message.parsed
                 logger.info(
-                    f"LLM Decision: {decision.account_code} (Conf: {decision.confidence_score})"
+                    f"LLM decision: {decision.account_code} (conf: {decision.confidence_score})"
                 )
                 return decision
             except Exception as e:
                 last_error = e
                 if attempt < max_attempts:
                     logger.warning(
-                        f"OpenAI API attempt {attempt}/{max_attempts} failed ({e}). Retrying..."
+                        f"LLM API attempt {attempt}/{max_attempts} failed ({e}). Retrying..."
                     )
                 else:
-                    logger.error(
-                        f"OpenAI API failed after {max_attempts} attempts: {e}"
-                    )
+                    logger.error(f"LLM API failed after {max_attempts} attempts: {e}")
         return self._fail_safe_decision(last_error)
 
     @staticmethod
@@ -91,15 +102,23 @@ class OpenAIGpt4oMiniClassifier(BaseClassifier):
             account_code="7000",
             account_name="Suspense Account",
             confidence_score=0.0,
-            reasoning=f"API Error (after {MAX_OPENAI_RETRIES} retries): {detail}",
+            reasoning=f"API Error (after {MAX_LLM_RETRIES} retries): {detail}",
             requires_human_review=True,
         )
 
     def _mock_response(self, transaction: Dict[str, Any]) -> TaggingDecision:
         merchant = (transaction.get("merchant") or "").lower()
         saas_keywords = (
-            "amazon web services", "aws", "google cloud", "gcp", "azure",
-            "slack", "github", "notion", "zoom", "microsoft 365",
+            "amazon web services",
+            "aws",
+            "google cloud",
+            "gcp",
+            "azure",
+            "slack",
+            "github",
+            "notion",
+            "zoom",
+            "microsoft 365",
         )
         marketing_keywords = ("google ads", "facebook ads", "meta ads", "linkedin ads")
 
@@ -129,5 +148,3 @@ class OpenAIGpt4oMiniClassifier(BaseClassifier):
             reasoning="Mock: unknown or long-tail merchant. Routing to human review.",
             requires_human_review=True,
         )
-
-

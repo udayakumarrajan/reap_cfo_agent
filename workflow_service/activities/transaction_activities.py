@@ -1,7 +1,7 @@
 from temporalio import activity
 from loguru import logger
 from typing import Dict, Any, List
-from ..agents.openai_classifier import OpenAIGpt4oMiniClassifier
+from ..agents import get_default_classifier_agent
 from erp_service.api.router import AccountingGatewayRouter
 
 class TransactionActivities:
@@ -11,7 +11,7 @@ class TransactionActivities:
     """
     def __init__(self, erp_router: AccountingGatewayRouter):
         self.erp_router = erp_router
-        self.classifier = OpenAIGpt4oMiniClassifier()
+        self.classifier = get_default_classifier_agent()
 
     @activity.defn
     async def fetch_tenant_context_activity(self, tenant_id: str) -> Dict[str, Any]:
@@ -31,7 +31,7 @@ class TransactionActivities:
     @activity.defn
     async def run_llm_tagger_activity(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Executes classification via OpenAI Strategy.
+        Executes classification via the configured classifier agent.
         """
         transaction = payload["transaction"]
         coa = payload["coa"]
