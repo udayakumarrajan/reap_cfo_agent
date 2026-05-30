@@ -1,4 +1,4 @@
-# Reap CFO Agent
+# Reap CFO Agent - Transaction Auto tagging
 
 Transaction auto-tagging and month-end close acceleration for a multi-tenant expense platform. Card and bill spend is ingested into a ledger, classified against each tenant’s chart of accounts (CoA) via an LLM, and posted automatically when confidence is high—or routed to suspense and human review when it is not.
 
