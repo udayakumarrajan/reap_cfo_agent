@@ -1,4 +1,6 @@
 from typing import Optional, Callable, Awaitable
+from uuid import uuid4
+
 from loguru import logger
 from temporalio.client import Client
 from erp_service.core.database import SqlAlchemyERP
@@ -28,8 +30,17 @@ def create_trigger_workflow_fn(
             breaker.record_failure()
             raise RuntimeError("Temporal client not connected. Cannot trigger workflow.")
 
-        tx_id = payload['tx_id']
-        workflow_id = f"tagging-{tx_id}"
+        tx_id = payload["tx_id"]
+        existing = erp.get_transaction(tx_id)
+        if existing and existing.get("workflow_id"):
+            logger.info(
+                f"Workflow already linked for transaction {tx_id} "
+                f"(workflow_id={existing['workflow_id']}). Skipping duplicate start."
+            )
+            breaker.record_success()
+            return
+
+        workflow_id = str(uuid4())
         logger.info(f"Triggering workflow for transaction {tx_id} (workflow_id={workflow_id})")
 
         try:
@@ -41,18 +52,13 @@ def create_trigger_workflow_fn(
                     "payload": payload
                 },
                 id=workflow_id,
-                task_queue=task_queue
+                task_queue=task_queue,
             )
             erp.set_workflow_id(tx_id, workflow_id)
             breaker.record_success()
         except Exception as e:
-            if "Workflow execution already started" in str(e) or "already started" in str(e).lower():
-                logger.warning(f"Workflow {workflow_id} already exists. Treating as success.")
-                erp.set_workflow_id(tx_id, workflow_id)
-                breaker.record_success()
-            else:
-                breaker.record_failure()
-                raise e
+            breaker.record_failure()
+            raise e
 
     return trigger_workflow
 

@@ -11,7 +11,7 @@ The system is split into two logical services: **ERP** (ledger state, HTTP API, 
 ## What it does
 
 1. **Ingest** — `POST /api/transactions` creates a transaction and an outbox row in one database transaction.
-2. **Publish** — `OutboxPublisher` delivers the event and starts a Temporal workflow (`tagging-{tx_id}`).
+2. **Publish** — `OutboxPublisher` delivers the event and starts a Temporal workflow (random `workflow_id`, stored on the transaction for HITL signals).
 3. **Classify** — `TransactionCloseWorkflow` loads CoA + history, runs the OpenAI (or mock) classifier.
 4. **Post**
    - **Straight-through** (confidence ≥ 0.85, no human review): status `AUTO_POSTED`, expense account applied.
