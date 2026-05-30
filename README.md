@@ -91,7 +91,8 @@ make up-d
 | http://localhost:8000/docs | Interactive API docs ([Scalar](https://github.com/scalar/scalar), bluePlanet, dark) |
 | http://localhost:8000/openapi.json | OpenAPI 3.0 schema (JSON) |
 | http://localhost:8000/health | Health / readiness probe |
-| http://localhost:8080 | Temporal Web UI |
+| http://localhost:8080 | Temporal Web UI **Note:** Make sure you are using the correct port, as it depends on how Temporal is running in your environment. In some setups, the port number may be **8233**.
+ |
 
 ### Dashboard
 
