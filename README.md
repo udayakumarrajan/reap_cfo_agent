@@ -4,7 +4,7 @@ Transaction auto-tagging and month-end close acceleration for a multi-tenant exp
 
 The system is split into two logical services: **ERP** (ledger state, HTTP API, transactional outbox) and **workflow** (Temporal orchestration, AI tagging, activities). They communicate over HTTP and Temporal, not shared in-process calls from workflow code.
 
-**Architecture & system design (Workflow 1, take-home):** [ARCHITECTURE_SYSTEM_DESIGN.md](ARCHITECTURE_SYSTEM_DESIGN.md) — requirements mapping, design patterns, sequence diagrams, and rationale (including Temporal vs alternatives).
+**Architecture & system design (Workflow 1, take-home):** [Architecture & Demo](https://drive.google.com/drive/folders/1MnWjrAS2BestAjFOHNHsCc2Rga1oTETH?usp=sharing) — requirements mapping, design patterns, sequence diagrams, rationale (including Temporal vs alternatives) and demo.
 
 ---
 
