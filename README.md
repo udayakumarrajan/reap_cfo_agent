@@ -67,7 +67,7 @@ flowchart LR
 | Python 3.11+ | Runtime |
 | [uv](https://docs.astral.sh/uv/getting-started/installation/) | Dependencies (`uv sync`) |
 | [Temporal CLI](https://docs.temporal.io/cli) | Local dev server (`temporal server start-dev`) |
-| OpenAI API key (optional) | Real LLM tagging; omit to use built-in mock classifier |
+| OpenAI API key  | Real LLM tagging; omit to use built-in mock classifier |
 
 ---
 
