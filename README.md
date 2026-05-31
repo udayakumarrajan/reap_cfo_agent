@@ -141,7 +141,7 @@ Default gRPC: `localhost:7233` (matches `.env.example`).
 ### 3. Start the application
 
 ```bash
-python main.py
+uv run python main.py
 ```
 
 Logs should show ERP on port `8000`, Temporal worker registered, and outbox publisher running.
